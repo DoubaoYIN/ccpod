@@ -71,6 +71,14 @@ echo "$model · $badge"
 echo "$(ccnow --badge)"
 ```
 
+## Known issue
+
+When switching to a relay (`ccuse easy`), Claude Code may show an
+"Auth conflict" warning because it sees both your OAuth token and the
+injected API key. **This is cosmetic** — CC prioritises the API key and
+routes correctly. See [`docs/architecture.md`](docs/architecture.md) for
+details.
+
 ## License
 
 [MIT](LICENSE) © ccpod contributors

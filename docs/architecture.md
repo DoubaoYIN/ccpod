@@ -76,6 +76,28 @@ In practice: a 1-2 second blip, full conversation state intact. This is
 what the "绝对不中断工作" requirement actually demands — a tool-assisted
 restart, not an in-process switch.
 
+### Known: "Auth conflict" warning when switching to a relay
+
+When you `ccuse easy` and then launch `claude`, CC prints:
+
+> ⚠ Auth conflict: Both a token (claude.ai) and an API key
+> (ANTHROPIC_API_KEY) are set.
+
+This is cosmetic. CC detects the OAuth token stored in the macOS
+keychain (from your Pro/Max `claude login`) alongside the
+`ANTHROPIC_API_KEY` we inject. It warns, but **prioritises the API key**
+— you can confirm by the `API Usage Billing` label in the status line.
+
+We cannot suppress this warning:
+- There is no env var or config flag to disable the check
+  ([anthropics/claude-code#9515](https://github.com/anthropics/claude-code/issues/9515),
+  [#4733](https://github.com/anthropics/claude-code/issues/4733)).
+- Running `claude /logout` would delete the OAuth token from the
+  keychain, breaking `ccuse off` (you'd have to re-login every time you
+  switch back to official).
+
+The warning is harmless. Routing works correctly in both directions.
+
 ### B-level — manual
 
 The user edits `settings.json` themselves, quits, re-launches. ccpod's
