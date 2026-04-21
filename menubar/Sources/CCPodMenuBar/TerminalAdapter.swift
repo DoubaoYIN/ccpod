@@ -24,26 +24,16 @@ final class GhosttyAdapter: TerminalAdapter {
     let identifier = "ghostty"
 
     func openNewWindow(command: String) throws {
-        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
-        tell application "Ghostty"
-            activate
-            tell application "System Events" to tell process "ghostty" to click menu item "New Window" of menu "File" of menu bar 1
-            delay 0.5
-            set term to focused terminal of selected tab of front window
-            input text "\(escaped)\\n" to term
-        end tell
-        """
-        try runAppleScript(script)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/Applications/Ghostty.app/Contents/MacOS/ghostty")
+        // Run ccgo, then drop into interactive shell so window stays open
+        process.arguments = ["-e", "bash", "-lc", "\(command); exec bash -l"]
+        try process.run()
     }
 
     func sendCommand(toTTY tty: String, command: String) throws {
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        // Use Ghostty's input text on the focused terminal of each window,
-        // matching by checking if the window's terminal tty matches.
-        // Fallback: write directly to TTY device file.
         if tty != "unknown", FileManager.default.isWritableFile(atPath: tty) {
             let data = (command + "\n").data(using: .utf8)!
             guard let fh = FileHandle(forWritingAtPath: tty) else {
@@ -55,7 +45,8 @@ final class GhosttyAdapter: TerminalAdapter {
             let script = """
             tell application "Ghostty"
                 set term to focused terminal of selected tab of front window
-                input text "\(escaped)\\n" to term
+                set cmd to "\(escaped)" & (ASCII character 10)
+                input text cmd to term
             end tell
             """
             try runAppleScript(script)

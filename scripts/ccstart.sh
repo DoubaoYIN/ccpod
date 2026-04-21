@@ -132,7 +132,8 @@ main() {
   echo ""
   info "✅ $prov · $workdir"
   cd "$workdir"
-  exec claude
+  claude
+  # claude exited — shell stays alive for potential relaunch
 }
 
 main "$@"

@@ -71,7 +71,8 @@ main() {
 
   info "✅ $name · $workdir"
   cd "$workdir"
-  exec claude
+  claude
+  # claude exited (e.g. /quit) — shell stays alive for potential relaunch
 }
 
 main "$@"
