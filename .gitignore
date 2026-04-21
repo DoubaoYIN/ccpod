@@ -14,8 +14,11 @@ providers/*.secret.json
 .LSOverride
 
 # ─── Swift / Xcode ───────────────────────────────────────
+menubar/.build/
 menubar/build/
+menubar/.swiftpm/
 menubar/DerivedData/
+menubar/Package.resolved
 menubar/**/*.xcworkspace/xcuserdata/
 menubar/**/*.xcodeproj/xcuserdata/
 menubar/**/*.xcodeproj/project.xcworkspace/xcuserdata/

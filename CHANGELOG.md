@@ -18,3 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status line sidecar: every `ccuse` switch writes a pre-formatted badge to
   `~/.claude/ccpod-status.txt` for any statusline tool to `cat` inline
 - `ccnow --badge` / `-b` prints the formatted badge directly (Phase 3a)
+- Native Swift menu bar app (`menubar/`): shows current provider, one-click
+  switch, auto-refreshes when CLI changes the provider. Built via
+  `menubar/build.sh` → `menubar/build/CCPod.app` (Phase 3b)
