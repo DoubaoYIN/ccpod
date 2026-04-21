@@ -16,10 +16,12 @@ Claude Code conversation.
 
 - 🔀 One-command provider switching (`ccuse`)
 - 📂 Smart project memory — each project remembers its last-used provider
-- 🎨 macOS menu bar app (native Swift) — MVP shipped, see `menubar/`
+- 🎨 macOS menu bar app (native Swift) — launcher + session monitor
 - 🔔 Quota exhaustion alerts via CC notification hook — planned
 - 📊 Status line sidecar: every switch writes a pre-formatted badge to
   `~/.claude/ccpod-status.txt` that any statusline tool can `cat` inline
+- 🪟 Per-window provider isolation — different windows can use different providers
+- 📋 Session registry — tracks all running CC instances
 
 ## Quick start (after Phase 2 lands)
 

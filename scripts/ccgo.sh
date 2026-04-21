@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ccgo — switch provider and launch Claude Code in one shot.
-#   Supports prefix matching for both provider and project.
+#   Each window gets its own provider via env injection (not settings.json).
 # Part of ccpod
 
 set -euo pipefail
@@ -26,7 +26,7 @@ USAGE
   ccgo <provider> <project>    在最近使用过、路径含 <project> 的目录启动
   ccgo --help, -h              显示帮助
 
-参数都支持前缀：provider 前缀 + project 子字符串模糊匹配。
+每个窗口独立：env 注入，不改 settings.json。
 
 EXAMPLES
   ccgo easy                    easyclaude + cwd
@@ -55,11 +55,21 @@ main() {
   fi
   [[ -d "$workdir" ]] || die "目录不存在: $workdir"
 
-  export CCPOD_PROJECT_DIR="$workdir"
-  "$SCRIPT_DIR/ccuse.sh" "$name"
+  # Remember this project's provider preference
+  remember_project_provider "$workdir" "$name"
 
-  echo ""
-  info "启动 Claude Code · $workdir"
+  # Inject provider env vars into this shell (inherited by exec claude)
+  eval "$(get_provider_env "$name")"
+
+  # Register session (cleanup stale ones first)
+  cleanup_dead_sessions
+  local cur_tty cur_terminal
+  cur_tty="$(tty 2>/dev/null || true)"
+  [[ "$cur_tty" == "not a tty" || -z "$cur_tty" ]] && cur_tty="unknown"
+  cur_terminal="$(detect_terminal)"
+  register_session $$ "$cur_tty" "$name" "$workdir" "$cur_terminal"
+
+  info "✅ $name · $workdir"
   cd "$workdir"
   exec claude
 }

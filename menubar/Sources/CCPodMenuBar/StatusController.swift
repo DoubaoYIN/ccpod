@@ -2,69 +2,106 @@ import AppKit
 
 final class StatusController {
     private var statusItem: NSStatusItem?
-    private let service = ProviderService()
+    private let sessionManager = SessionManager()
+    private let providerService = ProviderService()
+    private var launcherPanel: LauncherPanel?
 
     func start() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "⚪ …"
+        item.button?.title = "⚪ ccpod"
         statusItem = item
 
-        service.onChange = { [weak self] provider in
-            DispatchQueue.main.async {
-                self?.refresh(provider: provider)
-            }
+        sessionManager.onChange = { [weak self] in
+            self?.rebuildMenu()
         }
-        service.start()
-        refresh(provider: service.currentProvider())
+        sessionManager.start()
+
+        providerService.onChange = { [weak self] _ in
+            DispatchQueue.main.async { self?.updateBadge() }
+        }
+        providerService.start()
+
+        updateBadge()
+        rebuildMenu()
     }
 
     func stop() {
-        service.stop()
+        sessionManager.stop()
+        providerService.stop()
         if let item = statusItem {
             NSStatusBar.system.removeStatusItem(item)
         }
         statusItem = nil
     }
 
-    private func refresh(provider: String?) {
-        statusItem?.button?.title = badge(for: provider)
-        statusItem?.menu = buildMenu(current: provider)
+    private func updateBadge() {
+        let sessions = sessionManager.sessions
+        if sessions.isEmpty {
+            statusItem?.button?.title = "⚪ ccpod"
+        } else {
+            let providers = Set(sessions.map { $0.provider })
+            if providers.count == 1 {
+                statusItem?.button?.title = badge(for: providers.first)
+            } else {
+                statusItem?.button?.title = "🔀 ccpod (\(sessions.count))"
+            }
+        }
     }
 
     private func badge(for provider: String?) -> String {
         switch provider {
         case "official":   return "🟢 official"
         case "easyclaude": return "🔵 easyclaude"
-        case let .some(name): return "⚪ \(name)"
-        case .none:        return "⚪ unset"
+        case let .some(n): return "⚪ \(n)"
+        case .none:        return "⚪ ccpod"
         }
     }
 
-    private func buildMenu(current: String?) -> NSMenu {
+    private func rebuildMenu() {
         let menu = NSMenu()
-        for name in service.availableProviders() {
-            let item = NSMenuItem(
-                title: "切换到 \(name)",
-                action: #selector(switchProvider(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = name
-            if name == current { item.state = .on }
-            menu.addItem(item)
-        }
-        menu.addItem(NSMenuItem.separator())
 
-        let start = NSMenuItem(
-            title: "在终端启动 ccstart…",
-            action: #selector(launchStart),
-            keyEquivalent: ""
+        // Launch section
+        let launchItem = NSMenuItem(
+            title: "启动新会话...",
+            action: #selector(openLauncher),
+            keyEquivalent: "n"
         )
-        start.target = self
-        menu.addItem(start)
+        launchItem.target = self
+        menu.addItem(launchItem)
+
+        // Running sessions
+        let sessions = sessionManager.sessions
+        if !sessions.isEmpty {
+            menu.addItem(NSMenuItem.separator())
+            let header = NSMenuItem(title: "正在运行:", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+
+            for session in sessions {
+                let sessionBadge = badge(for: session.provider)
+                let title = "\(sessionBadge) · \(session.projectName)"
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+
+                // Switch sub-items: offer all OTHER providers
+                for provName in providerService.availableProviders() {
+                    if provName == session.provider { continue }
+                    let switchItem = NSMenuItem(
+                        title: "    切到 \(provName)",
+                        action: #selector(switchSession(_:)),
+                        keyEquivalent: ""
+                    )
+                    switchItem.target = self
+                    switchItem.representedObject = SwitchAction(
+                        session: session, targetProvider: provName
+                    )
+                    menu.addItem(switchItem)
+                }
+            }
+        }
 
         menu.addItem(NSMenuItem.separator())
-
         let quit = NSMenuItem(
             title: "退出 ccpod",
             action: #selector(quit),
@@ -73,36 +110,106 @@ final class StatusController {
         quit.target = self
         menu.addItem(quit)
 
-        return menu
+        statusItem?.menu = menu
+        updateBadge()
     }
 
-    @objc private func switchProvider(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        service.switchTo(provider: name) { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success:
-                    self?.refresh(provider: name)
-                case .failure(let err):
-                    self?.presentError(err)
+    @objc private func openLauncher() {
+        if launcherPanel == nil {
+            let panel = LauncherPanel()
+            panel.onLaunch = { [weak self] provider, project, terminalName in
+                self?.doLaunch(provider: provider, project: project, terminalName: terminalName)
+            }
+            launcherPanel = panel
+        }
+        launcherPanel?.refresh()
+        launcherPanel?.center()
+        launcherPanel?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func doLaunch(provider: String, project: String, terminalName: String) {
+        let registry = TerminalRegistry.shared
+        let adapter = registry.adapters.first { $0.name == terminalName }
+            ?? registry.defaultAdapter
+
+        let ccgoPath = locateCCGo()
+        let command = "\(ccgoPath) \(provider) \(shellQuote(project))"
+
+        DispatchQueue.global().async {
+            do {
+                try adapter.openNewWindow(command: command)
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.showError(error)
                 }
             }
         }
     }
 
-    @objc private func launchStart() {
-        service.launchCCStartInTerminal()
+    @objc private func switchSession(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? SwitchAction else { return }
+        let session = action.session
+        let target = action.targetProvider
+
+        let adapter = TerminalRegistry.shared.adapter(for: session.terminal)
+            ?? TerminalRegistry.shared.defaultAdapter
+
+        let ccgoPath = locateCCGo()
+
+        DispatchQueue.global().async { [weak self] in
+            do {
+                // Send /quit to the CC session
+                try adapter.sendCommand(toTTY: session.tty, command: "/quit")
+                Thread.sleep(forTimeInterval: 2.0)
+                // Relaunch with new provider
+                let cmd = "\(ccgoPath) \(target)"
+                try adapter.sendCommand(toTTY: session.tty, command: cmd)
+            } catch {
+                DispatchQueue.main.async {
+                    self?.showError(error)
+                }
+            }
+        }
     }
 
     @objc private func quit() {
         NSApp.terminate(nil)
     }
 
-    private func presentError(_ err: Error) {
+    private func locateCCGo() -> String {
+        let candidates = [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".local/bin/ccgo").path,
+            "/usr/local/bin/ccgo",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+            ?? "ccgo"
+    }
+
+    private func shellQuote(_ s: String) -> String {
+        if s.rangeOfCharacter(from: .init(charactersIn: " \t'\"\\$`!")) != nil {
+            let escaped = s.replacingOccurrences(of: "'", with: "'\\''")
+            return "'\(escaped)'"
+        }
+        return s
+    }
+
+    private func showError(_ err: Error) {
         let alert = NSAlert()
-        alert.messageText = "ccpod 切换失败"
+        alert.messageText = "ccpod 操作失败"
         alert.informativeText = String(describing: err)
         alert.alertStyle = .warning
         alert.runModal()
+    }
+}
+
+final class SwitchAction: NSObject {
+    let session: SessionInfo
+    let targetProvider: String
+
+    init(session: SessionInfo, targetProvider: String) {
+        self.session = session
+        self.targetProvider = targetProvider
     }
 }

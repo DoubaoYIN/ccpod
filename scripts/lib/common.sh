@@ -11,6 +11,7 @@ CCPOD_CURRENT_FILE="$CCPOD_CLAUDE_DIR/current-provider"
 CCPOD_STATUS_FILE="$CCPOD_CLAUDE_DIR/ccpod-status.txt"
 CCPOD_SETTINGS_FILE="$CCPOD_CLAUDE_DIR/settings.json"
 CCPOD_PROJECT_MAP="$CCPOD_CLAUDE_DIR/project-providers.json"
+CCPOD_SESSIONS_FILE="$CCPOD_CLAUDE_DIR/ccpod-sessions.json"
 
 # ─── Pre-formatted badge for statusline tools ─────────────
 # Writes "<emoji> <name>" to CCPOD_STATUS_FILE. Any statusline can
@@ -145,5 +146,116 @@ if proj in data:
     print(data[proj])
 else:
     sys.exit(1)
+PYEOF
+}
+
+# ─── Terminal detection ──────────────────────────────────
+detect_terminal() {
+  case "${TERM_PROGRAM:-}" in
+    ghostty)       printf 'ghostty' ;;
+    Apple_Terminal) printf 'terminal' ;;
+    iTerm.app)     printf 'iterm2' ;;
+    *)             printf '%s' "${TERM_PROGRAM:-unknown}" ;;
+  esac
+}
+
+# ─── Provider env injection ──────────────────────────────
+# Reads provider JSON and outputs export/unset statements.
+# Always unsets ANTHROPIC_* first to prevent leakage from prior sessions
+# in the same shell (critical for one-click provider switch).
+# Usage: eval "$(get_provider_env easyclaude)"
+get_provider_env() {
+  local name="$1"
+  local prov="$CCPOD_PROVIDERS_DIR/${name}.json"
+  [[ -f "$prov" ]] || die "未知 provider: $name"
+  require_cmd python3
+  python3 - "$prov" <<'PYEOF'
+import json, sys, shlex
+data = json.load(open(sys.argv[1]))
+env = data.get("env", {})
+all_keys = {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_API_TOKEN",
+            "ANTHROPIC_AUTH_TOKEN"}
+all_keys.update(env.keys())
+for k in sorted(all_keys):
+    if k in env and env[k]:
+        print(f"export {k}={shlex.quote(env[k])}")
+    else:
+        print(f"unset {k} 2>/dev/null || true")
+PYEOF
+}
+
+# ─── Session registry ────────────────────────────────────
+# Atomic read-modify-write of ccpod-sessions.json via python3.
+register_session() {
+  local pid="$1" tty="$2" provider="$3" project="$4" terminal="$5"
+  require_cmd python3
+  python3 - "$CCPOD_SESSIONS_FILE" "$pid" "$tty" "$provider" "$project" "$terminal" <<'PYEOF'
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+rec = {
+    "pid": int(sys.argv[2]),
+    "tty": sys.argv[3],
+    "provider": sys.argv[4],
+    "project": sys.argv[5],
+    "terminal": sys.argv[6],
+    "started_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+}
+data = []
+if os.path.exists(path):
+    try:
+        data = json.load(open(path))
+    except Exception:
+        data = []
+data = [s for s in data if s.get("pid") != rec["pid"]]
+data.append(rec)
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+PYEOF
+}
+
+unregister_session() {
+  local pid="$1"
+  [[ -f "$CCPOD_SESSIONS_FILE" ]] || return 0
+  require_cmd python3
+  python3 - "$CCPOD_SESSIONS_FILE" "$pid" <<'PYEOF'
+import json, os, sys, tempfile
+path, pid = sys.argv[1], int(sys.argv[2])
+try:
+    data = json.load(open(path))
+except Exception:
+    sys.exit(0)
+data = [s for s in data if s.get("pid") != pid]
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+PYEOF
+}
+
+cleanup_dead_sessions() {
+  [[ -f "$CCPOD_SESSIONS_FILE" ]] || return 0
+  require_cmd python3
+  python3 - "$CCPOD_SESSIONS_FILE" <<'PYEOF'
+import json, os, sys, tempfile
+path = sys.argv[1]
+try:
+    data = json.load(open(path))
+except Exception:
+    sys.exit(0)
+alive = []
+for s in data:
+    try:
+        os.kill(s["pid"], 0)
+        alive.append(s)
+    except OSError:
+        pass
+if len(alive) != len(data):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as f:
+        json.dump(alive, f, indent=2)
+    os.replace(tmp, path)
 PYEOF
 }

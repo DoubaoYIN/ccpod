@@ -19,12 +19,15 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-ccuse — Switch Claude Code provider
+ccuse — Set default Claude Code provider
 
 USAGE
-  ccuse <provider>       Switch to the given provider (prefix OK)
+  ccuse <provider>       Set default provider (prefix OK)
   ccuse --list, -l       List available providers
   ccuse --help, -h       Show this help
+
+Note: ccuse sets the default for ccstart/ccgo. It does NOT modify
+settings.json. Each CC window gets its own provider via env injection.
 
 EXAMPLES
   ccuse official         Use Anthropic Pro/Max OAuth
@@ -60,22 +63,12 @@ main() {
 
   local name
   name="$(resolve_provider "$1")"
-  local prov="$CCPOD_PROVIDERS_DIR/${name}.json"
-
-  require_cmd jq "brew install jq"
 
   [[ -d "$CCPOD_CLAUDE_DIR" ]] || mkdir -p "$CCPOD_CLAUDE_DIR"
-  [[ -f "$CCPOD_SETTINGS_FILE" ]] || echo '{}' > "$CCPOD_SETTINGS_FILE"
-
-  # Atomic write: merge provider's env block into settings.json
-  local tmp
-  tmp="$(mktemp)"
-  jq --slurpfile p "$prov" '.env = $p[0].env' "$CCPOD_SETTINGS_FILE" > "$tmp"
-  mv "$tmp" "$CCPOD_SETTINGS_FILE"
 
   echo "$name" > "$CCPOD_CURRENT_FILE"
   ccpod_format_badge "$name" > "$CCPOD_STATUS_FILE"
-  info "✅ 已切换到 $name"
+  info "✅ 已设为默认: $name"
 
   # Smart-default B: remember this project's preferred provider
   if [[ -n "${CCPOD_PROJECT_DIR:-}" ]]; then

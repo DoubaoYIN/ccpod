@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking**: `ccuse` no longer modifies `settings.json`. It now only sets
+  the default provider preference. Each CC window gets its own provider via
+  env injection at launch time (per-window isolation).
+- `ccgo` and `ccstart` inject provider env vars directly into the `claude`
+  process instead of writing to the global `settings.json`.
+
+### Added
+- Session registry (`~/.claude/ccpod-sessions.json`): tracks all running CC
+  instances with PID, TTY, provider, project, and terminal info.
+- Menu bar launcher panel: select provider + project + terminal → opens a
+  new terminal window with CC already running.
+- Running sessions list in menu bar: shows all active CC windows, with
+  one-click provider switching (auto `/quit` + relaunch).
+- Terminal adapter system: Ghostty (native AppleScript) and Terminal.app
+  support, extensible for iTerm2.
+- `get_provider_env`, `register_session`, `unregister_session`,
+  `cleanup_dead_sessions`, `detect_terminal` helpers in `common.sh`.
+
+### Fixed
+- Provider env leakage: switching from easyclaude to official in the same
+  shell now properly unsets `ANTHROPIC_*` variables.
+
+## [0.1.0] — 2026-04-21
+
 ### Added
 - Initial repository scaffold (Phase 1)
 - Core shell commands: `ccuse`, `ccstart`, `ccnow`

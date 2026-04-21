@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ccstart — Interactive launcher for Claude Code
 #   Pick a recent project, pick a provider, then launch `claude`.
+#   Each window gets its own provider via env injection.
 # Part of ccpod
 
 set -euo pipefail
@@ -17,12 +18,9 @@ SCRIPT_DIR="$(
 
 source "$SCRIPT_DIR/lib/common.sh"
 
-# Gather recent projects by decoding ~/.claude/projects/ subdir names.
-# CC encodes project paths by prefixing with '-' and replacing '/' with '-'.
 gather_projects() {
   local d="$HOME/.claude/projects"
   [[ -d "$d" ]] || return 0
-  # List subdirs sorted by mtime (most recent first), decode, filter to existing dirs
   ls -t1 "$d" 2>/dev/null | head -20 | while IFS= read -r enc; do
     local decoded
     decoded="$(echo "$enc" | sed 's|^-|/|; s|-|/|g')"
@@ -69,23 +67,43 @@ pick_working_dir() {
 
 pick_provider() {
   local default_prov="$1"
+  local -a providers=()
+  local f name
+  for f in "$CCPOD_PROVIDERS_DIR"/*.json; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f" .json)"
+    [[ "$name" == *.example ]] && continue
+    providers+=("$name")
+  done
+
   echo "" >&2
   echo "线路 (默认: $default_prov):" >&2
-  echo "  1) 🟢 official  (Pro/Max OAuth)" >&2
-  echo "  2) 🔵 easyclaude (relay)" >&2
+  local i=1
+  for p in "${providers[@]}"; do
+    local badge
+    badge="$(ccpod_format_badge "$p")"
+    printf '  %d) %s\n' "$i" "$badge" >&2
+    ((i++))
+  done
   local choice
-  read -r -p "请选择 [1/2/回车默认]: " choice
+  read -r -p "请选择 [1-$((i-1))/回车默认]: " choice
 
   case "$choice" in
-    1) echo "official" ;;
-    2) echo "easyclaude" ;;
     "") echo "$default_prov" ;;
-    *) die "无效选择: $choice" ;;
+    *)
+      if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice < i )); then
+        echo "${providers[$((choice-1))]}"
+      else
+        die "无效选择: $choice"
+      fi
+      ;;
   esac
 }
 
 main() {
   echo "ccpod · 交互式启动"
+
+  require_cmd claude "https://github.com/anthropics/claude-code"
 
   local workdir
   workdir="$(pick_working_dir)"
@@ -97,11 +115,22 @@ main() {
   local prov
   prov="$(pick_provider "$default_prov")"
 
-  export CCPOD_PROJECT_DIR="$workdir"
-  "$SCRIPT_DIR/ccuse.sh" "$prov"
+  # Remember preference
+  remember_project_provider "$workdir" "$prov"
+
+  # Inject provider env vars
+  eval "$(get_provider_env "$prov")"
+
+  # Register session
+  cleanup_dead_sessions
+  local cur_tty cur_terminal
+  cur_tty="$(tty 2>/dev/null || true)"
+  [[ "$cur_tty" == "not a tty" || -z "$cur_tty" ]] && cur_tty="unknown"
+  cur_terminal="$(detect_terminal)"
+  register_session $$ "$cur_tty" "$prov" "$workdir" "$cur_terminal"
 
   echo ""
-  info "启动 Claude Code · $workdir"
+  info "✅ $prov · $workdir"
   cd "$workdir"
   exec claude
 }
