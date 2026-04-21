@@ -16,10 +16,10 @@ Claude Code conversation.
 
 - 🔀 One-command provider switching (`ccuse`)
 - 📂 Smart project memory — each project remembers its last-used provider
-- 🎨 macOS menu bar app (native Swift)
-- 🔔 Quota exhaustion alerts via CC notification hook
-- 📊 Status line integration with [Claude-HUD](https://github.com/) showing
-  the current provider right after the model name
+- 🎨 macOS menu bar app (native Swift) — planned
+- 🔔 Quota exhaustion alerts via CC notification hook — planned
+- 📊 Status line sidecar: every switch writes a pre-formatted badge to
+  `~/.claude/ccpod-status.txt` that any statusline tool can `cat` inline
 
 ## Quick start (after Phase 2 lands)
 
@@ -50,6 +50,24 @@ After switching, the current Claude Code session is resumed with
 
 For the full technical rationale — including why we don't implement true
 A-level hot-switching — see [`docs/architecture.md`](docs/architecture.md).
+
+## Status line integration
+
+Every `ccuse` switch writes two sidecar files:
+
+- `~/.claude/current-provider` — raw name (`official`, `easyclaude`)
+- `~/.claude/ccpod-status.txt` — formatted badge (`🟢 official`, `🔵 easyclaude`)
+
+Drop either into any statusline tool. Examples:
+
+```bash
+# In a custom statusline script
+badge="$(cat ~/.claude/ccpod-status.txt 2>/dev/null)"
+echo "$model · $badge"
+
+# Or invoke ccnow directly
+echo "$(ccnow --badge)"
+```
 
 ## License
 

@@ -73,6 +73,7 @@ main() {
   mv "$tmp" "$CCPOD_SETTINGS_FILE"
 
   echo "$name" > "$CCPOD_CURRENT_FILE"
+  ccpod_format_badge "$name" > "$CCPOD_STATUS_FILE"
   info "✅ 已切换到 $name"
 
   # Smart-default B: remember this project's preferred provider

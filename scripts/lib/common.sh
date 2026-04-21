@@ -8,8 +8,20 @@
 : "${CCPOD_CLAUDE_DIR:=$HOME/.claude}"
 CCPOD_PROVIDERS_DIR="$CCPOD_CLAUDE_DIR/providers"
 CCPOD_CURRENT_FILE="$CCPOD_CLAUDE_DIR/current-provider"
+CCPOD_STATUS_FILE="$CCPOD_CLAUDE_DIR/ccpod-status.txt"
 CCPOD_SETTINGS_FILE="$CCPOD_CLAUDE_DIR/settings.json"
 CCPOD_PROJECT_MAP="$CCPOD_CLAUDE_DIR/project-providers.json"
+
+# ─── Pre-formatted badge for statusline tools ─────────────
+# Writes "<emoji> <name>" to CCPOD_STATUS_FILE. Any statusline can
+# inline it via `cat ~/.claude/ccpod-status.txt`.
+ccpod_format_badge() {
+  case "$1" in
+    official)   printf '🟢 official' ;;
+    easyclaude) printf '🔵 easyclaude' ;;
+    *)          printf '⚪ %s' "$1" ;;
+  esac
+}
 
 # ─── Output helpers ───────────────────────────────────────
 die() {
