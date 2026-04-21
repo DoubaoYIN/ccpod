@@ -21,3 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native Swift menu bar app (`menubar/`): shows current provider, one-click
   switch, auto-refreshes when CLI changes the provider. Built via
   `menubar/build.sh` → `menubar/build/CCPod.app` (Phase 3b)
+- `ccuse` now accepts unique prefixes — `ccuse off` / `ccuse easy` (Phase 4a)
+- New `ccgo` command: switch provider + `cd` + launch `claude` in one shot,
+  with substring fuzzy-match against recent CC projects (Phase 4a)

@@ -22,13 +22,15 @@ usage() {
 ccuse — Switch Claude Code provider
 
 USAGE
-  ccuse <provider>       Switch to the given provider
+  ccuse <provider>       Switch to the given provider (prefix OK)
   ccuse --list, -l       List available providers
   ccuse --help, -h       Show this help
 
 EXAMPLES
   ccuse official         Use Anthropic Pro/Max OAuth
+  ccuse off              Same as above (unique prefix)
   ccuse easyclaude       Use easyclaude relay
+  ccuse easy             Same as above (unique prefix)
 EOF
 }
 
@@ -56,10 +58,9 @@ main() {
     -l|--list)    list_providers; exit 0 ;;
   esac
 
-  local name="$1"
+  local name
+  name="$(resolve_provider "$1")"
   local prov="$CCPOD_PROVIDERS_DIR/${name}.json"
-
-  [[ -f "$prov" ]] || die "未知 provider: $name (运行 'ccuse --list' 查看可用)"
 
   require_cmd jq "brew install jq"
 

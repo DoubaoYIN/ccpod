@@ -23,6 +23,52 @@ ccpod_format_badge() {
   esac
 }
 
+# ─── Provider prefix resolver ─────────────────────────────
+# "off" → "official", "easy" → "easyclaude". Exact match wins first.
+# Errors out if the prefix is ambiguous.
+resolve_provider() {
+  local q="$1"
+  if [[ -f "$CCPOD_PROVIDERS_DIR/$q.json" ]]; then
+    printf '%s' "$q"
+    return 0
+  fi
+  local matches=()
+  local f name
+  for f in "$CCPOD_PROVIDERS_DIR"/*.json; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f" .json)"
+    [[ "$name" == *.example ]] && continue
+    if [[ "$name" == "$q"* ]]; then
+      matches+=("$name")
+    fi
+  done
+  case ${#matches[@]} in
+    0) die "未知 provider: '$q' (运行 'ccuse --list' 查看可用)" ;;
+    1) printf '%s' "${matches[0]}" ;;
+    *) die "provider '$q' 不唯一，匹配到: ${matches[*]}" ;;
+  esac
+}
+
+# ─── Fuzzy match against recent CC projects ──────────────
+# Looks in ~/.claude/projects/ (where CC stores per-project session dirs),
+# decodes the '-' encoded names back to paths, returns the most recently
+# used one whose path contains $1 as a substring.
+find_project_by_fragment() {
+  local frag="$1"
+  local d="$HOME/.claude/projects"
+  [[ -d "$d" ]] || return 1
+  local enc decoded
+  # ls -t gives newest first; first substring match wins.
+  for enc in $(ls -t1 "$d" 2>/dev/null); do
+    decoded="$(echo "$enc" | sed 's|^-|/|; s|-|/|g')"
+    if [[ -d "$decoded" && "$decoded" == *"$frag"* ]]; then
+      printf '%s' "$decoded"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ─── Output helpers ───────────────────────────────────────
 die() {
   printf '❌ %s\n' "$*" >&2

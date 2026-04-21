@@ -39,7 +39,7 @@ unlink_cmd() {
   fi
 }
 
-for cmd in ccuse ccstart ccnow; do
+for cmd in ccuse ccstart ccnow ccgo; do
   unlink_cmd "$cmd"
 done
 

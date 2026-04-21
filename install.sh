@@ -51,7 +51,7 @@ link_cmd() {
   info "链接: $dst → $src"
 }
 
-for cmd in ccuse ccstart ccnow; do
+for cmd in ccuse ccstart ccnow ccgo; do
   link_cmd "$cmd"
 done
 

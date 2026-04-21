@@ -30,10 +30,12 @@ cd ~/Projects/ccpod
 ./install.sh
 
 # Use
-ccstart          # Interactive: pick project + provider, launch CC
-ccuse official   # Direct switch to official Pro/Max OAuth
-ccuse easyclaude # Direct switch to relay
-ccnow            # Show current provider
+ccstart              # Interactive: pick project + provider, launch CC
+ccuse off            # Switch to official (prefix matching)
+ccuse easy           # Switch to easyclaude
+ccgo easy analytics  # Switch + launch in recent project containing "analytics"
+ccnow                # Show current provider
+ccnow --badge        # 🔵 easyclaude
 ```
 
 ## How it works (short version)
