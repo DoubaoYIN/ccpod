@@ -13,3 +13,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared helpers under `scripts/lib/`
 - Provider config templates: `official.json`, `easyclaude.example.json`
 - MIT license, .gitignore, README skeleton
+- `install.sh` / `uninstall.sh` — symlink-based installer, idempotent, honors
+  `CCPOD_BIN_DIR` and `CCPOD_CLAUDE_DIR` for sandboxed installs (Phase 2)
