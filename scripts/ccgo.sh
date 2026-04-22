@@ -71,8 +71,17 @@ main() {
 
   info "✅ $name · $workdir"
   cd "$workdir"
-  claude
-  # claude exited (e.g. /quit) — shell stays alive for potential relaunch
+  claude || true
+
+  # claude exited — check if menu bar app left a pending switch command
+  local pending="$CCPOD_CLAUDE_DIR/ccpod-pending-$$.sh"
+  if [[ -f "$pending" ]]; then
+    local next_cmd
+    next_cmd="$(cat "$pending")"
+    rm -f "$pending"
+    info "🔄 自动切换: $next_cmd"
+    eval "$next_cmd"
+  fi
 }
 
 main "$@"

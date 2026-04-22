@@ -24,10 +24,40 @@ final class GhosttyAdapter: TerminalAdapter {
     let identifier = "ghostty"
 
     func openNewWindow(command: String) throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ccpod-zdot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+
+        // .zshrc that loads user config then runs the launch command
+        let zshrc = base.appendingPathComponent(".zshrc")
+        let rcContent = """
+        [[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"
+        [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+        if [[ -n "$CCPOD_LAUNCH_CMD" ]]; then
+            local cmd="$CCPOD_LAUNCH_CMD"
+            unset CCPOD_LAUNCH_CMD
+            unset ZDOTDIR
+            eval "$cmd"
+        fi
+        """
+        try rcContent.write(to: zshrc, atomically: true, encoding: .utf8)
+
+        // Bootstrap script: sets env then execs interactive zsh
+        let bootstrap = base.appendingPathComponent("boot.sh")
+        let bootContent = """
+        #!/bin/zsh
+        export ZDOTDIR="\(base.path)"
+        export CCPOD_LAUNCH_CMD="\(command.replacingOccurrences(of: "\"", with: "\\\""))"
+        exec /bin/zsh
+        """
+        try bootContent.write(to: bootstrap, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: bootstrap.path)
+
+        // Launch via `open` so Ghostty runs as independent app (no TCC prompts for CCPod)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/Applications/Ghostty.app/Contents/MacOS/ghostty")
-        // Run ccgo, then drop into interactive shell so window stays open
-        process.arguments = ["-e", "bash", "-lc", "\(command); exec bash -l"]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-na", "Ghostty", "--args", "-e", bootstrap.path]
         try process.run()
     }
 
@@ -35,7 +65,8 @@ final class GhosttyAdapter: TerminalAdapter {
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         if tty != "unknown", FileManager.default.isWritableFile(atPath: tty) {
-            let data = (command + "\n").data(using: .utf8)!
+            // \r (carriage return) is what terminals interpret as Enter
+            let data = (command + "\r").data(using: .utf8)!
             guard let fh = FileHandle(forWritingAtPath: tty) else {
                 throw TerminalAdapterError.scriptFailed("无法写入 \(tty)")
             }
@@ -72,7 +103,7 @@ final class TerminalAppAdapter: TerminalAdapter {
 
     func sendCommand(toTTY tty: String, command: String) throws {
         if tty != "unknown", FileManager.default.isWritableFile(atPath: tty) {
-            let data = (command + "\n").data(using: .utf8)!
+            let data = (command + "\r").data(using: .utf8)!
             guard let fh = FileHandle(forWritingAtPath: tty) else {
                 throw TerminalAdapterError.scriptFailed("无法写入 \(tty)")
             }

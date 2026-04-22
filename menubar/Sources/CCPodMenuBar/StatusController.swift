@@ -1,18 +1,26 @@
 import AppKit
+import SwiftUI
 
-final class StatusController {
+final class StatusController: NSObject {
     private var statusItem: NSStatusItem?
     private let sessionManager = SessionManager()
     private let providerService = ProviderService()
-    private var launcherPanel: LauncherPanel?
+    private let projectManager = ProjectManager()
+    private var popover: NSPopover?
+    private let vm = PopoverViewModel()
 
     func start() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "⚪ ccpod"
+        item.button?.target = self
+        item.button?.action = #selector(togglePopover)
         statusItem = item
 
         sessionManager.onChange = { [weak self] in
-            self?.rebuildMenu()
+            DispatchQueue.main.async {
+                self?.updateBadge()
+                self?.refreshVM()
+            }
         }
         sessionManager.start()
 
@@ -21,8 +29,19 @@ final class StatusController {
         }
         providerService.start()
 
+        vm.onLaunch = { [weak self] provider, project, terminal in
+            self?.popover?.close()
+            self?.doLaunch(provider: provider, project: project, terminalName: terminal)
+        }
+        vm.onSwitch = { [weak self] session, target in
+            self?.popover?.close()
+            self?.doSwitch(session: session, target: target)
+        }
+        vm.onQuit = {
+            NSApp.terminate(nil)
+        }
+
         updateBadge()
-        rebuildMenu()
     }
 
     func stop() {
@@ -33,6 +52,33 @@ final class StatusController {
         }
         statusItem = nil
     }
+
+    @objc private func togglePopover() {
+        if let popover = popover, popover.isShown {
+            popover.close()
+            return
+        }
+        refreshVM()
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.animates = true
+        let hosting = NSHostingController(rootView: PopoverContentView(vm: vm))
+        let size = hosting.view.fittingSize
+        pop.contentSize = NSSize(width: max(size.width, 320), height: size.height)
+        pop.contentViewController = hosting
+        popover = pop
+
+        if let button = statusItem?.button {
+            pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func refreshVM() {
+        vm.refresh(providerService: providerService, projectManager: projectManager, sessionManager: sessionManager)
+    }
+
+    // MARK: - Badge
 
     private func updateBadge() {
         let sessions = sessionManager.sessions
@@ -57,76 +103,7 @@ final class StatusController {
         }
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-
-        // Launch section
-        let launchItem = NSMenuItem(
-            title: "启动新会话...",
-            action: #selector(openLauncher),
-            keyEquivalent: "n"
-        )
-        launchItem.target = self
-        menu.addItem(launchItem)
-
-        // Running sessions
-        let sessions = sessionManager.sessions
-        if !sessions.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            let header = NSMenuItem(title: "正在运行:", action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
-
-            for session in sessions {
-                let sessionBadge = badge(for: session.provider)
-                let title = "\(sessionBadge) · \(session.projectName)"
-                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-                item.isEnabled = false
-                menu.addItem(item)
-
-                // Switch sub-items: offer all OTHER providers
-                for provName in providerService.availableProviders() {
-                    if provName == session.provider { continue }
-                    let switchItem = NSMenuItem(
-                        title: "    切到 \(provName)",
-                        action: #selector(switchSession(_:)),
-                        keyEquivalent: ""
-                    )
-                    switchItem.target = self
-                    switchItem.representedObject = SwitchAction(
-                        session: session, targetProvider: provName
-                    )
-                    menu.addItem(switchItem)
-                }
-            }
-        }
-
-        menu.addItem(NSMenuItem.separator())
-        let quit = NSMenuItem(
-            title: "退出 ccpod",
-            action: #selector(quit),
-            keyEquivalent: "q"
-        )
-        quit.target = self
-        menu.addItem(quit)
-
-        statusItem?.menu = menu
-        updateBadge()
-    }
-
-    @objc private func openLauncher() {
-        if launcherPanel == nil {
-            let panel = LauncherPanel()
-            panel.onLaunch = { [weak self] provider, project, terminalName in
-                self?.doLaunch(provider: provider, project: project, terminalName: terminalName)
-            }
-            launcherPanel = panel
-        }
-        launcherPanel?.refresh()
-        launcherPanel?.center()
-        launcherPanel?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
+    // MARK: - Launch
 
     private func doLaunch(provider: String, project: String, terminalName: String) {
         let registry = TerminalRegistry.shared
@@ -136,46 +113,41 @@ final class StatusController {
         let ccgoPath = locateCCGo()
         let command = "\(ccgoPath) \(provider) \(shellQuote(project))"
 
-        DispatchQueue.global().async {
+        DispatchQueue.global().async { [weak self] in
             do {
                 try adapter.openNewWindow(command: command)
             } catch {
-                DispatchQueue.main.async { [weak self] in
-                    self?.showError(error)
-                }
+                DispatchQueue.main.async { self?.showError(error) }
             }
         }
     }
 
-    @objc private func switchSession(_ sender: NSMenuItem) {
-        guard let action = sender.representedObject as? SwitchAction else { return }
-        let session = action.session
-        let target = action.targetProvider
+    // MARK: - Switch
 
-        let adapter = TerminalRegistry.shared.adapter(for: session.terminal)
-            ?? TerminalRegistry.shared.defaultAdapter
-
+    private func doSwitch(session: SessionInfo, target: String) {
         let ccgoPath = locateCCGo()
 
         DispatchQueue.global().async { [weak self] in
+            let claudeDir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".claude")
+            let pendingFile = claudeDir.appendingPathComponent("ccpod-pending-\(session.pid).sh")
+            let cmd = "\(ccgoPath) \(target) \(self?.shellQuote(session.project) ?? "")"
+
             do {
-                // Send /quit to the CC session
-                try adapter.sendCommand(toTTY: session.tty, command: "/quit")
-                Thread.sleep(forTimeInterval: 2.0)
-                // Relaunch with new provider
-                let cmd = "\(ccgoPath) \(target)"
-                try adapter.sendCommand(toTTY: session.tty, command: cmd)
+                try cmd.write(to: pendingFile, atomically: true, encoding: .utf8)
             } catch {
-                DispatchQueue.main.async {
-                    self?.showError(error)
-                }
+                DispatchQueue.main.async { self?.showError(error) }
+                return
+            }
+
+            let claudePID = self?.findClaudePID(onTTY: session.tty)
+            if let claudePID = claudePID {
+                kill(pid_t(claudePID), SIGTERM)
             }
         }
     }
 
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
+    // MARK: - Helpers
 
     private func locateCCGo() -> String {
         let candidates = [
@@ -202,14 +174,30 @@ final class StatusController {
         alert.alertStyle = .warning
         alert.runModal()
     }
-}
 
-final class SwitchAction: NSObject {
-    let session: SessionInfo
-    let targetProvider: String
-
-    init(session: SessionInfo, targetProvider: String) {
-        self.session = session
-        self.targetProvider = targetProvider
+    private func findClaudePID(onTTY tty: String) -> Int? {
+        let ttyShort = tty.replacingOccurrences(of: "/dev/", with: "")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-t", ttyShort, "-o", "pid,comm"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return nil }
+        for line in output.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasSuffix("claude") || trimmed.contains(" claude") {
+                let parts = trimmed.split(separator: " ", maxSplits: 1)
+                if let pidStr = parts.first, let pid = Int(pidStr) {
+                    return pid
+                }
+            }
+        }
+        return nil
     }
 }
