@@ -10,8 +10,13 @@ final class PopoverViewModel: ObservableObject {
     @Published var selectedProject: String = ""
     @Published var selectedTerminal: String = ""
 
+    @Published var showAddProvider = false
+    var onShowAddProvider: (() -> Void)?
+    var onAddProject: (() -> Void)?
+
     var onLaunch: ((String, String, String) -> Void)?
     var onSwitch: ((SessionInfo, String) -> Void)?
+    var onClose: ((SessionInfo) -> Void)?
     var onQuit: (() -> Void)?
 
     func refresh(providerService: ProviderService, projectManager: ProjectManager, sessionManager: SessionManager) {
@@ -34,6 +39,8 @@ final class PopoverViewModel: ObservableObject {
 
 struct PopoverContentView: View {
     @ObservedObject var vm: PopoverViewModel
+
+    var onRefresh: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,6 +72,12 @@ struct PopoverContentView: View {
                     }
                 }
                 .labelsHidden()
+                Button(action: { vm.onShowAddProvider?() }) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.plain)
+                .help("添加线路")
             }
 
             HStack {
@@ -76,6 +89,12 @@ struct PopoverContentView: View {
                     }
                 }
                 .labelsHidden()
+                Button(action: { vm.onAddProject?() }) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.plain)
+                .help("添加项目")
             }
 
             HStack {
@@ -109,23 +128,28 @@ struct PopoverContentView: View {
                 .foregroundColor(.secondary)
 
             ForEach(vm.sessions, id: \.pid) { session in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(badgeEmoji(session.provider))
-                        Text("\(session.provider) · \(session.projectName)")
-                            .font(.system(size: 13))
-                    }
-
-                    HStack(spacing: 8) {
-                        ForEach(vm.providers.filter { $0 != session.provider }, id: \.self) { target in
-                            Button("切到 \(target)") {
-                                vm.onSwitch?(session, target)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                HStack(spacing: 6) {
+                    Text(badgeEmoji(session.provider))
+                    Text("#\(session.sessionNumber)")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Text(session.projectName)
+                        .font(.system(size: 13))
+                    Spacer()
+                    SessionProviderPicker(
+                        current: session.provider,
+                        providers: vm.providers,
+                        onSwitch: { target in
+                            vm.onSwitch?(session, target)
                         }
+                    )
+                    Button(action: { vm.onClose?(session) }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
                     }
-                    .padding(.leading, 20)
+                    .buttonStyle(.plain)
+                    .help("关闭 #\(session.sessionNumber)")
                 }
             }
         }
@@ -148,7 +172,37 @@ struct PopoverContentView: View {
         switch provider {
         case "official": return "🟢"
         case "easyclaude": return "🔵"
+        case "minimax": return "🟠"
+        case "glm": return "🟣"
+        case "volcengine": return "🔴"
+        case "aliyun": return "🟤"
+        case "deepseek": return "🔷"
+        case "kimi": return "🟡"
         default: return "⚪"
+        }
+    }
+}
+
+private struct SessionProviderPicker: View {
+    let current: String
+    let providers: [String]
+    let onSwitch: (String) -> Void
+
+    @State private var selected: String = ""
+
+    var body: some View {
+        Picker("", selection: $selected) {
+            ForEach(providers, id: \.self) { p in
+                Text(p).tag(p)
+            }
+        }
+        .labelsHidden()
+        .frame(width: 120)
+        .onAppear { selected = current }
+        .onChange(of: selected) { newValue in
+            if newValue != current {
+                onSwitch(newValue)
+            }
         }
     }
 }

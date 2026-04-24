@@ -12,6 +12,8 @@ CCPOD_STATUS_FILE="$CCPOD_CLAUDE_DIR/ccpod-status.txt"
 CCPOD_SETTINGS_FILE="$CCPOD_CLAUDE_DIR/settings.json"
 CCPOD_PROJECT_MAP="$CCPOD_CLAUDE_DIR/project-providers.json"
 CCPOD_SESSIONS_FILE="$CCPOD_CLAUDE_DIR/ccpod-sessions.json"
+CCPOD_PROJECTS_FILE="$CCPOD_CLAUDE_DIR/ccpod-projects.json"
+CCPOD_COUNTER_FILE="$CCPOD_CLAUDE_DIR/ccpod-session-counter"
 
 # ─── Pre-formatted badge for statusline tools ─────────────
 # Writes "<emoji> <name>" to CCPOD_STATUS_FILE. Any statusline can
@@ -20,6 +22,12 @@ ccpod_format_badge() {
   case "$1" in
     official)   printf '🟢 official' ;;
     easyclaude) printf '🔵 easyclaude' ;;
+    minimax)    printf '🟠 minimax' ;;
+    glm)        printf '🟣 glm' ;;
+    volcengine) printf '🔴 volcengine' ;;
+    aliyun)     printf '🟤 aliyun' ;;
+    deepseek)   printf '🔷 deepseek' ;;
+    kimi)       printf '🟡 kimi' ;;
     *)          printf '⚪ %s' "$1" ;;
   esac
 }
@@ -50,16 +58,54 @@ resolve_provider() {
   esac
 }
 
-# ─── Fuzzy match against recent CC projects ──────────────
-# Looks in ~/.claude/projects/ (where CC stores per-project session dirs),
-# decodes the '-' encoded names back to paths, returns the most recently
-# used one whose path contains $1 as a substring.
+# ─── Fuzzy match against projects ─────────────────────────
+# Searches: 1) manual entries in ccpod-projects.json
+#           2) scan_dirs from ccpod-projects.json
+#           3) CC's ~/.claude/projects/ (legacy)
+# Returns the first match whose path contains $1 as a substring.
 find_project_by_fragment() {
   local frag="$1"
+
+  # Search ccpod-projects.json (manual + scan_dirs)
+  if [[ -f "$CCPOD_PROJECTS_FILE" ]]; then
+    require_cmd python3
+    local result
+    result="$(python3 - "$CCPOD_PROJECTS_FILE" "$frag" <<'PYEOF'
+import json, os, sys, glob
+path, frag = sys.argv[1], sys.argv[2]
+try:
+    cfg = json.load(open(path))
+except Exception:
+    sys.exit(1)
+# manual entries first
+for m in cfg.get("manual", []):
+    p = os.path.expanduser(m["path"])
+    if os.path.isdir(p) and frag in p:
+        print(p, end="")
+        sys.exit(0)
+# then scan_dirs
+for sd in cfg.get("scan_dirs", []):
+    sd = os.path.expanduser(sd)
+    if not os.path.isdir(sd):
+        continue
+    for entry in sorted(os.listdir(sd)):
+        p = os.path.join(sd, entry)
+        if not os.path.isdir(p):
+            continue
+        if frag not in p:
+            continue
+        if os.path.exists(os.path.join(p, "CLAUDE.md")) or os.path.exists(os.path.join(p, ".git")):
+            print(p, end="")
+            sys.exit(0)
+sys.exit(1)
+PYEOF
+    )" && { printf '%s' "$result"; return 0; }
+  fi
+
+  # Fallback: CC's project dirs
   local d="$HOME/.claude/projects"
   [[ -d "$d" ]] || return 1
   local enc decoded
-  # ls -t gives newest first; first substring match wins.
   for enc in $(ls -t1 "$d" 2>/dev/null); do
     decoded="$(echo "$enc" | sed 's|^-|/|; s|-|/|g')"
     if [[ -d "$decoded" && "$decoded" == *"$frag"* ]]; then
@@ -189,9 +235,10 @@ PYEOF
 register_session() {
   local pid="$1" tty="$2" provider="$3" project="$4" terminal="$5"
   require_cmd python3
-  python3 - "$CCPOD_SESSIONS_FILE" "$pid" "$tty" "$provider" "$project" "$terminal" <<'PYEOF'
+  python3 - "$CCPOD_SESSIONS_FILE" "$pid" "$tty" "$provider" "$project" "$terminal" "$CCPOD_COUNTER_FILE" "${CCPOD_SESSION_NUM:-}" <<'PYEOF'
 import json, os, sys, tempfile, time
-path = sys.argv[1]
+path, counter_path = sys.argv[1], sys.argv[7]
+reuse_num = sys.argv[8].strip() if len(sys.argv) > 8 else ""
 rec = {
     "pid": int(sys.argv[2]),
     "tty": sys.argv[3],
@@ -207,13 +254,31 @@ if os.path.exists(path):
     except Exception:
         data = []
 data = [s for s in data if s.get("pid") != rec["pid"]]
+if reuse_num:
+    num = int(reuse_num)
+else:
+    counter = 0
+    try:
+        counter = int(open(counter_path).read().strip())
+    except Exception:
+        pass
+    num = counter + 1
+    os.makedirs(os.path.dirname(counter_path), exist_ok=True)
+    with open(counter_path, "w") as f:
+        f.write(str(num))
+rec["num"] = num
 data.append(rec)
 os.makedirs(os.path.dirname(path), exist_ok=True)
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
 with os.fdopen(fd, "w") as f:
     json.dump(data, f, indent=2)
 os.replace(tmp, path)
+print(num)
 PYEOF
+}
+
+set_terminal_title() {
+  printf '\033]2;%s\007' "$1"
 }
 
 unregister_session() {

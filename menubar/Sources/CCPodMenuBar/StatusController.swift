@@ -8,6 +8,7 @@ final class StatusController: NSObject {
     private let projectManager = ProjectManager()
     private var popover: NSPopover?
     private let vm = PopoverViewModel()
+    private var addProviderWindow: NSWindow?
 
     func start() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -29,6 +30,11 @@ final class StatusController: NSObject {
         }
         providerService.start()
 
+        projectManager.onChange = { [weak self] in
+            DispatchQueue.main.async { self?.refreshVM() }
+        }
+        projectManager.start()
+
         vm.onLaunch = { [weak self] provider, project, terminal in
             self?.popover?.close()
             self?.doLaunch(provider: provider, project: project, terminalName: terminal)
@@ -37,8 +43,19 @@ final class StatusController: NSObject {
             self?.popover?.close()
             self?.doSwitch(session: session, target: target)
         }
+        vm.onClose = { [weak self] session in
+            self?.doClose(session: session)
+        }
         vm.onQuit = {
             NSApp.terminate(nil)
+        }
+        vm.onShowAddProvider = { [weak self] in
+            self?.popover?.close()
+            self?.showAddProviderWindow()
+        }
+        vm.onAddProject = { [weak self] in
+            self?.popover?.close()
+            self?.showAddProjectDialog()
         }
 
         updateBadge()
@@ -47,6 +64,7 @@ final class StatusController: NSObject {
     func stop() {
         sessionManager.stop()
         providerService.stop()
+        projectManager.stop()
         if let item = statusItem {
             NSStatusBar.system.removeStatusItem(item)
         }
@@ -62,7 +80,9 @@ final class StatusController: NSObject {
         let pop = NSPopover()
         pop.behavior = .transient
         pop.animates = true
-        let hosting = NSHostingController(rootView: PopoverContentView(vm: vm))
+        let hosting = NSHostingController(rootView: PopoverContentView(vm: vm, onRefresh: { [weak self] in
+            self?.refreshVM()
+        }))
         let size = hosting.view.fittingSize
         pop.contentSize = NSSize(width: max(size.width, 320), height: size.height)
         pop.contentViewController = hosting
@@ -84,23 +104,64 @@ final class StatusController: NSObject {
         let sessions = sessionManager.sessions
         if sessions.isEmpty {
             statusItem?.button?.title = "⚪ ccpod"
+        } else if sessions.count == 1 {
+            let s = sessions[0]
+            statusItem?.button?.title = "\(badgeEmoji(s.provider)) #\(s.sessionNumber) \(s.provider)"
         } else {
-            let providers = Set(sessions.map { $0.provider })
-            if providers.count == 1 {
-                statusItem?.button?.title = badge(for: providers.first)
-            } else {
-                statusItem?.button?.title = "🔀 ccpod (\(sessions.count))"
-            }
+            let nums = sessions.map { "#\($0.sessionNumber)" }.joined(separator: " ")
+            statusItem?.button?.title = "🔀 \(nums)"
+        }
+        updateStatusFile(sessions)
+    }
+
+    private func updateStatusFile(_ sessions: [SessionInfo]) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let statusURL = home.appendingPathComponent(".claude/ccpod-status.txt")
+        let text: String
+        if sessions.isEmpty {
+            text = "⚪ ccpod"
+        } else {
+            text = sessions.map { "\(badgeEmoji($0.provider)) #\($0.sessionNumber) \($0.provider)·\($0.projectName)" }.joined(separator: " | ")
+        }
+        try? text.write(to: statusURL, atomically: true, encoding: .utf8)
+    }
+
+    private func badgeEmoji(_ provider: String) -> String {
+        switch provider {
+        case "official": return "🟢"
+        case "easyclaude": return "🔵"
+        case "minimax": return "🟠"
+        case "glm": return "🟣"
+        case "volcengine": return "🔴"
+        case "aliyun": return "🟤"
+        case "deepseek": return "🔷"
+        case "kimi": return "🟡"
+        default: return "⚪"
         }
     }
 
-    private func badge(for provider: String?) -> String {
-        switch provider {
-        case "official":   return "🟢 official"
-        case "easyclaude": return "🔵 easyclaude"
-        case let .some(n): return "⚪ \(n)"
-        case .none:        return "⚪ ccpod"
+    // MARK: - Add Provider Window
+
+    private func showAddProviderWindow() {
+        if let w = addProviderWindow, w.isVisible {
+            w.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
+        let view = AddProviderView(onComplete: { [weak self] in
+            self?.refreshVM()
+            self?.addProviderWindow?.close()
+        })
+        let hosting = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "添加线路"
+        window.styleMask = [.titled, .closable]
+        window.setContentSize(NSSize(width: 340, height: 400))
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        addProviderWindow = window
     }
 
     // MARK: - Launch
@@ -112,10 +173,13 @@ final class StatusController: NSObject {
 
         let ccgoPath = locateCCGo()
         let command = "\(ccgoPath) \(provider) \(shellQuote(project))"
+        let projectName = (project as NSString).lastPathComponent
+        let num = sessionManager.nextSessionNumber()
+        let title = "#\(num) \(provider) · \(projectName)"
 
         DispatchQueue.global().async { [weak self] in
             do {
-                try adapter.openNewWindow(command: command)
+                try adapter.openNewWindow(command: command, title: title)
             } catch {
                 DispatchQueue.main.async { self?.showError(error) }
             }
@@ -144,6 +208,22 @@ final class StatusController: NSObject {
             if let claudePID = claudePID {
                 kill(pid_t(claudePID), SIGTERM)
             }
+        }
+    }
+
+    // MARK: - Close
+
+    private func doClose(session: SessionInfo) {
+        // SIGTERM to the shell PID that runs ccgo — shell exits, claude gets
+        // SIGHUP, and the terminal window closes (if the terminal is set to
+        // close on shell exit, which is the default for Ghostty/Terminal).
+        kill(pid_t(session.pid), SIGTERM)
+        // Nudge a refresh so the row disappears promptly; the 5s cleanup timer
+        // also catches it, but this is snappier.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.sessionManager.reload()
+            self?.refreshVM()
+            self?.updateBadge()
         }
     }
 
@@ -199,5 +279,19 @@ final class StatusController: NSObject {
             }
         }
         return nil
+    }
+
+    private func showAddProjectDialog() {
+        let panel = NSOpenPanel()
+        panel.title = "选择项目目录"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects")
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let url = panel.url {
+            projectManager.addManualProject(path: url.path)
+            refreshVM()
+        }
     }
 }

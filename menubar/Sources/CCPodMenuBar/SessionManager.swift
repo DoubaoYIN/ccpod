@@ -7,6 +7,9 @@ struct SessionInfo: Codable {
     let project: String
     let terminal: String
     let started_at: String
+    let num: Int?
+
+    var sessionNumber: Int { num ?? 0 }
 
     var projectName: String {
         (project as NSString).lastPathComponent
@@ -14,6 +17,21 @@ struct SessionInfo: Codable {
 
     var isAlive: Bool {
         kill(pid_t(pid), 0) == 0
+    }
+}
+
+extension SessionManager {
+    func nextSessionNumber() -> Int {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let counterURL = home
+            .appendingPathComponent(".claude")
+            .appendingPathComponent("ccpod-session-counter")
+        var counter = 0
+        if let str = try? String(contentsOf: counterURL, encoding: .utf8),
+           let val = Int(str.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            counter = val
+        }
+        return counter + 1
     }
 }
 

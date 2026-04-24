@@ -127,10 +127,18 @@ main() {
   cur_tty="$(tty 2>/dev/null || true)"
   [[ "$cur_tty" == "not a tty" || -z "$cur_tty" ]] && cur_tty="unknown"
   cur_terminal="$(detect_terminal)"
-  register_session $$ "$cur_tty" "$prov" "$workdir" "$cur_terminal"
+  local session_num
+  session_num="$(register_session $$ "$cur_tty" "$prov" "$workdir" "$cur_terminal")"
+
+  local project_name
+  project_name="$(basename "$workdir")"
+  set_terminal_title "#${session_num} ${prov} · ${project_name}"
+
+  export CCPOD_SESSION_NUM="$session_num"
+  export CCPOD_PROVIDER="$prov"
 
   echo ""
-  info "✅ $prov · $workdir"
+  info "✅ #${session_num} $prov · $workdir"
   cd "$workdir"
   claude || true
 

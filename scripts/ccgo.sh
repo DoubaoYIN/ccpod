@@ -47,9 +47,12 @@ main() {
   name="$(resolve_provider "$1")"
 
   if [[ $# -ge 2 ]]; then
-    local frag="$2"
-    workdir="$(find_project_by_fragment "$frag")" \
-      || die "找不到最近项目含 '$frag' (只查 ~/.claude/projects/ 里的)"
+    if [[ -d "$2" ]]; then
+      workdir="$2"
+    else
+      workdir="$(find_project_by_fragment "$2")" \
+        || die "找不到项目含 '$2'"
+    fi
   else
     workdir="$(pwd)"
   fi
@@ -67,9 +70,17 @@ main() {
   cur_tty="$(tty 2>/dev/null || true)"
   [[ "$cur_tty" == "not a tty" || -z "$cur_tty" ]] && cur_tty="unknown"
   cur_terminal="$(detect_terminal)"
-  register_session $$ "$cur_tty" "$name" "$workdir" "$cur_terminal"
+  local session_num
+  session_num="$(register_session $$ "$cur_tty" "$name" "$workdir" "$cur_terminal")"
 
-  info "✅ $name · $workdir"
+  local project_name
+  project_name="$(basename "$workdir")"
+  set_terminal_title "#${session_num} ${name} · ${project_name}"
+
+  export CCPOD_SESSION_NUM="$session_num"
+  export CCPOD_PROVIDER="$name"
+
+  info "✅ #${session_num} $name · $workdir"
   cd "$workdir"
   claude || true
 
